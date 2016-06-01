@@ -1,0 +1,6 @@
+image: luke_empty_square.png
+resolution: 0.1
+origin: [-6, -6, 0.0]
+occupied_thresh: 0.7
+free_thresh: .2
+negate: 0
