@@ -4,6 +4,7 @@ import rospy
 import roslib
 import numpy as np
 import sys
+import math
 
 from discretePolicyTranslator import discretePolicyTranslator
 from geometry_msgs.msg import PoseStamped
@@ -37,25 +38,21 @@ class goalHandler(object):
 
 	def __init__(self, filename):
 		rospy.init_node('goal_sender')
+		self.stuck_buffer = 15
+		self.stuck_count = 5
 		self.dpt = discretePolicyTranslator(filename)
 		self.pose = Pose('',[0,0,0],'tf',None)
 		self.current_status = 3
 		self.tf_exist = False
-		self.current_position = None
+		#self.current_position = None
 		self.tf_exception_wrapper()
-		#if filename == "fakealphas1.txt":
-		#	self.current_position = [0,0,0,0]
-		#	self.goal_point = [0,0,0,0]
-		#elif filename == "fakealphas2.txt":		
-		#	self.current_position = [1,2,0,0]
-		#	self.goal_point = [1,2,0,0]
-		self.current_position = self.get_new_goal(self.current_position)
-		self.goal_point = self.get_new_goal(self.current_position)
+		#self.current_position = self.get_new_goal(self.current_position)
+		self.goal_point = self.get_new_goal(self.pose._pose)
 		#self.goal_point = self.get_new_goal(self.current_position)
 		self.pub = rospy.Publisher('/deckard/move_base_simple/goal',PoseStamped,queue_size=10)
-		self.send_goal()
+		#self.send_goal()
 		rospy.Subscriber('/deckard/move_base/status',GoalStatusArray,self.callback)
-		print("initial position: " + str(self.current_position))
+		print("initial position: " + str(self.pose._pose))
 
 	def tf_exception_wrapper(self):
 		tries = 0
@@ -63,7 +60,7 @@ class goalHandler(object):
 			try: 
 				self.pose.tf_update()	
 				self.tf_exist = True
-				self.current_position = self.pose._pose
+				#self.current_position = self.pose._pose
 				#self.goal_point = self.pose._pose
 			except tf.LookupException as error:
 				tries = tries + 1
@@ -75,13 +72,17 @@ class goalHandler(object):
 				rospy.sleep(2)		
 
 	def callback(self,msg):
+		self.last_position = self.pose._pose
 		self.pose.tf_update()
+		self.stuck_distance = math.sqrt((self.pose._pose[0] - self.last_position[0]) ** 2 + (self.pose._pose[1] - self.last_position[1]) ** 2)
 		#self.tf_exception_wrapper()
-		self.current_position = self.pose._pose
+		#self.current_position = self.pose._pose
+		self.is_stuck()
 		self.is_at_goal()		
-		print("status: " + str(self.current_status) + "\tcheck: " + str(self.current_status==3) + "\tcurrent position: " + str(self.current_position))
+		print("status: " + str(self.current_status) + "\tcheck: " + str(self.current_status==3) + "\tcurrent position: " + str(self.pose._pose))
 		if self.current_status == 3:
 			self.send_goal()
+			self.stuck_count = self.stuck_buffer
 			self.current_status = 1
 		rospy.sleep(1)	
 
@@ -89,23 +90,35 @@ class goalHandler(object):
 		tol = 0.25
 		print("Checking if arrived at goal")
 		try:
-			print("X goal diff: " + str(abs(self.goal_point[0] - self.current_position[0])) + "\tY goal diff: " + str(abs(self.goal_point[1] - self.current_position[1])))
-			if abs(self.goal_point[0] - self.current_position[0]) < tol and abs(self.goal_point[1] - self.current_position[1]) < tol:
+			#print("X goal diff: " + str(abs(self.goal_point[0] - self.current_position[0])) + "\tY goal diff: " + str(abs(self.goal_point[1] - self.current_position[1])))
+			if abs(self.goal_point[0] - self.pose._pose[0]) < tol and abs(self.goal_point[1] - self.pose._pose[1]) < tol:
 				self.current_status = 3
 		except TypeError:
 			print("Goal pose does not yet exist!")
-			self.current_status = 3		
+			self.current_status = 3	
+
+	def is_stuck(self):
+		if self.stuck_count > 0: #check buffer
+			self.stuck_count += -1
+			return False #return not stuck
+		self.stuck_count = self.stuck_buffer
+		if self.stuck_distance < 0.5:
+			print("Robot stuck; resending goal.")
+			self.send_goal()
+			return True
+		else:
+			return False	
 
 	def get_new_goal(self,current_position):
 		point = current_position
-		if self.current_status == 3:
-			point[0] = round(point[0])
-			point[1] = round(point[1])
+		#if self.current_status == 3:
+		point[0] = round(point[0])
+		point[1] = round(point[1])
 		print(self.dpt.getNextPose(point))
 		return self.dpt.getNextPose(point)
 
 	def send_goal(self):
-		self.goal_point = self.get_new_goal(self.current_position)
+		self.goal_point = self.get_new_goal(self.pose._pose)
 		print("sent goal: " + str(self.goal_point))
 
 		new_goal = PoseStamped()
@@ -113,17 +126,8 @@ class goalHandler(object):
 		new_goal.pose.position.y = self.goal_point[1]
 		new_goal.pose.position.z = self.goal_point[2]
 		theta = self.goal_point[3]
-		'''if self.goal_point[0] - self.current_position[0] > 0.1:
-			theta = 0
-		elif self.goal_point[0] - self.current_position[0] < -0.1:
-			theta = 180
-		elif self.goal_point[1] - self.current_position[1] > 0.1:
-			theta = 90
-		elif self.goal_point[1] - self.current_position[1] < -0.1:
-			theta = -90		
-		theta = 0	'''
-		quat = tf.transformations.quaternion_from_euler(0,0,np.deg2rad(theta))
 
+		quat = tf.transformations.quaternion_from_euler(0,0,np.deg2rad(theta))
 		new_goal.pose.orientation.x = quat[0]
 		new_goal.pose.orientation.y = quat[1]
 		new_goal.pose.orientation.z = quat[2]
