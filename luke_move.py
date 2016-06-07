@@ -38,23 +38,21 @@ class goalHandler(object):
 
 	def __init__(self, filename):
 		rospy.init_node('goal_sender')
-		self.stuck_buffer = 15
-		self.stuck_count = 5
+		self.stuck_buffer = 10
+		self.stuck_count = self.stuck_buffer
 		self.dpt = discretePolicyTranslator(filename)
 		self.pose = Pose('',[0,0,0],'tf',None)
 		self.current_status = 3
 		self.tf_exist = False
-		#self.current_position = None
 		self.tf_exception_wrapper()
-		#self.current_position = self.get_new_goal(self.current_position)
 		self.goal_point = self.get_new_goal(self.pose._pose)
-		#self.goal_point = self.get_new_goal(self.current_position)
 		self.pub = rospy.Publisher('/deckard/move_base_simple/goal',PoseStamped,queue_size=10)
-		#self.send_goal()
+		rospy.sleep(1) #<>TODO: figure out why the hell this works --> solves issue where robot would not move on initialization
 		rospy.Subscriber('/deckard/move_base/status',GoalStatusArray,self.callback)
 		print("initial position: " + str(self.pose._pose))
 
 	def tf_exception_wrapper(self):
+		#waits for transforms to become available and handles interim exceptions
 		tries = 0
 		while not self.tf_exist and tries < 10:
 			try: 
@@ -75,8 +73,6 @@ class goalHandler(object):
 		self.last_position = self.pose._pose
 		self.pose.tf_update()
 		self.stuck_distance = math.sqrt((self.pose._pose[0] - self.last_position[0]) ** 2 + (self.pose._pose[1] - self.last_position[1]) ** 2)
-		#self.tf_exception_wrapper()
-		#self.current_position = self.pose._pose
 		self.is_stuck()
 		self.is_at_goal()		
 		print("status: " + str(self.current_status) + "\tcheck: " + str(self.current_status==3) + "\tcurrent position: " + str(self.pose._pose))
@@ -87,6 +83,7 @@ class goalHandler(object):
 		rospy.sleep(1)	
 
 	def is_at_goal(self):
+		#checks if robot has arrived at its goal pose
 		tol = 0.25
 		print("Checking if arrived at goal")
 		try:
@@ -98,6 +95,7 @@ class goalHandler(object):
 			self.current_status = 3	
 
 	def is_stuck(self):
+		#re-sends goal pose if robot is mentally or physically stuck for 10 iterations
 		if self.stuck_count > 0: #check buffer
 			self.stuck_count += -1
 			return False #return not stuck
@@ -110,6 +108,7 @@ class goalHandler(object):
 			return False	
 
 	def get_new_goal(self,current_position):
+		#get new goal pose from module
 		point = current_position
 		#if self.current_status == 3:
 		point[0] = round(point[0])
@@ -118,6 +117,7 @@ class goalHandler(object):
 		return self.dpt.getNextPose(point)
 
 	def send_goal(self):
+		#get and send new goal pose
 		self.goal_point = self.get_new_goal(self.pose._pose)
 		print("sent goal: " + str(self.goal_point))
 
@@ -141,5 +141,4 @@ class goalHandler(object):
 
 if __name__ == "__main__":
 	gh = goalHandler(sys.argv[1])
-	
 	rospy.spin()
